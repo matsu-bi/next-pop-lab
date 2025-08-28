@@ -13,11 +13,23 @@ function fetchGdeltArticles(query: string, hours: number, maxItems: number): Pro
       });
       
       res.on('end', () => {
+        if (!data.trim().startsWith('{') && !data.trim().startsWith('[')) {
+          if (data.includes('Your search') || data.includes('no results') || data.includes('No articles')) {
+            console.log('指定された条件に該当する記事が見つかりませんでした。');
+            resolve([]);
+            return;
+          } else {
+            console.error('GDELT APIから予期しない応答を受信しました:', data.substring(0, 100) + '...');
+            resolve([]);
+            return;
+          }
+        }
+
         try {
           const jsonData = JSON.parse(data);
           
           if (!jsonData.articles || !Array.isArray(jsonData.articles)) {
-            console.error('GDELT APIからの応答が期待される形式ではありません');
+            console.log('該当する記事が見つかりませんでした。');
             resolve([]);
             return;
           }
@@ -49,8 +61,8 @@ function fetchGdeltArticles(query: string, hours: number, maxItems: number): Pro
           
           resolve(uniqueArticles);
         } catch (error) {
-          console.error('GDELT APIレスポンスの解析に失敗しました:', error);
-          reject(error);
+          console.error('GDELT APIレスポンスの解析に失敗しました。検索条件を変更してお試しください。');
+          resolve([]);
         }
       });
     }).on('error', (error: Error) => {
