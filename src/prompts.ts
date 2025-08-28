@@ -1,4 +1,4 @@
-import type { GdeltArticle } from './types';
+import type { GdeltArticle, XPost } from './types';
 
 function makeSummaryPrompt(articles: GdeltArticle[]): string {
   const articleList = articles.map((article, index) => {
@@ -20,6 +20,26 @@ ${articleList}
 要約:`;
 }
 
+function makeStancePrompt(posts: XPost[]): string {
+  const postList = posts.map((post, index) => {
+    return `${index + 1}. テキスト: ${post.text}\n   言語: ${post.lang || 'N/A'}\n   いいね数: ${post.like_count || 0}`;
+  }).join('\n\n');
+
+  return `以下のXポストを分析し、指定されたトピックに対するスタンス（立場）を分類してください。
+
+ポスト一覧:
+${postList}
+
+要求事項:
+- 各ポストを「支持」「反対」「中立」「不明」の4つのカテゴリに分類してください
+- 結果は必ずJSON形式で返してください
+- JSON以外の文字は一切含めないでください
+- 形式: {"support":数値,"oppose":数値,"neutral":数値,"unknown":数値}
+
+JSON:`;
+}
+
 module.exports = {
-  makeSummaryPrompt
+  makeSummaryPrompt,
+  makeStancePrompt
 };
