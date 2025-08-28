@@ -4,10 +4,12 @@ const yargs = require('yargs');
 const { hideBin } = require('yargs/helpers');
 const dotenv = require('dotenv');
 const { fetchGdeltArticles } = require('./services/gdelt');
+const { fetchXPosts } = require('./services/x');
 const { ollamaGenerate } = require('./services/ollama');
-const { makeSummaryPrompt } = require('./prompts');
+const { makeSummaryPrompt, makeStancePrompt } = require('./prompts');
 const { renderMarkdown } = require('./render');
 const { writeFile, nowStamp, sanitizeFilename } = require('./utils/fsutil');
+const { barChartSVG } = require('./utils/svg');
 
 dotenv.config();
 
@@ -32,6 +34,20 @@ const argv = yargs(hideBin(process.argv))
     type: 'string',
     description: 'Ollama model to use for summarization'
   })
+  .option('withX', {
+    type: 'boolean',
+    description: 'Include X posts analysis',
+    default: false
+  })
+  .option('xMax', {
+    type: 'number',
+    description: 'Maximum number of X posts to fetch',
+    default: 80
+  })
+  .option('xLang', {
+    type: 'string',
+    description: 'Languages for X posts (comma-separated, e.g. "en,ja")'
+  })
   .help()
   .alias('h', 'help')
   .version()
@@ -54,6 +70,49 @@ async function main() {
           console.log(`   URL: ${article.url}\n`);
         });
 
+        let posts: any[] = [];
+        let stanceCounts: any = null;
+        let svgFilename: string | undefined = undefined;
+
+        if (argv.withX) {
+          try {
+            console.log(`Xポストを取得中: "${argv.topic}" (最大${argv.xMax}件)`);
+            posts = await fetchXPosts(argv.topic, argv.xMax, argv.xLang);
+            console.log(`取得したXポスト数: ${posts.length}件`);
+
+            if (posts.length > 0 && argv.ollamaModel) {
+              try {
+                console.log(`Ollamaでスタンス分析中 (モデル: ${argv.ollamaModel})...`);
+                const stancePrompt = makeStancePrompt(posts);
+                const stanceResponse = await ollamaGenerate(argv.ollamaModel, stancePrompt);
+                
+                try {
+                  stanceCounts = JSON.parse(stanceResponse.trim());
+                  console.log('スタンス分析結果:', stanceCounts);
+                } catch (parseError) {
+                  console.log('スタンス分析のJSON解析に失敗しました。全て不明として処理します。');
+                  stanceCounts = { support: 0, oppose: 0, neutral: 0, unknown: posts.length };
+                }
+
+                const svgContent = barChartSVG(stanceCounts);
+                const timestamp = nowStamp();
+                const sanitizedTopic = sanitizeFilename(argv.topic);
+                svgFilename = `${timestamp}_${sanitizedTopic}_stance.svg`;
+                const svgPath = `output/${svgFilename}`;
+                
+                writeFile(svgPath, svgContent);
+                console.log(`SVGファイルを保存しました: ${svgPath}`);
+                
+              } catch (error) {
+                console.error('スタンス分析に失敗しました:', error);
+                stanceCounts = { support: 0, oppose: 0, neutral: 0, unknown: posts.length };
+              }
+            }
+          } catch (error) {
+            console.error('Xポストの取得に失敗しました:', error);
+          }
+        }
+
         if (argv.ollamaModel) {
           try {
             console.log(`Ollamaで要約を生成中 (モデル: ${argv.ollamaModel})...`);
@@ -64,7 +123,7 @@ async function main() {
             console.log('\n要約:');
             console.log(summary);
             
-            const markdown = renderMarkdown(argv.topic, argv.hours, summary, articles);
+            const markdown = renderMarkdown(argv.topic, argv.hours, summary, articles, posts, stanceCounts, svgFilename);
             const timestamp = nowStamp();
             const sanitizedTopic = sanitizeFilename(argv.topic);
             const filename = `output/${timestamp}_${sanitizedTopic}.md`;
@@ -88,6 +147,7 @@ async function main() {
     console.log('next-pop-lab CLI is ready!');
     console.log('使用例: npx ts-node src/index.ts --topic "defense budget Japan" --hours 24');
     console.log('Ollama使用例: npx ts-node src/index.ts --topic "防衛費 増額" --hours 24 --ollamaModel "qwen2.5:7b"');
+    console.log('X統合使用例: npx ts-node src/index.ts --topic "防衛費 増額" --withX --xLang "en,ja" --ollamaModel "qwen2.5:7b"');
   }
 }
 
